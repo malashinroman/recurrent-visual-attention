@@ -13,7 +13,7 @@ def get_train_valid_loader(data_dir,
                            valid_size=0.1,
                            shuffle=True,
                            show_sample=False,
-                           num_workers=4,
+                           num_workers=0,
                            pin_memory=False):
     """
     Utility function for loading and returning train and valid
@@ -43,38 +43,25 @@ def get_train_valid_loader(data_dir,
     """
     error_msg = "[!] valid_size should be in the range [0, 1]."
     assert ((valid_size >= 0) and (valid_size <= 1)), error_msg
-
+    np.random.seed(random_seed)
     # define transforms
     normalize = transforms.Normalize((0.1307,), (0.3081,))
     trans = transforms.Compose([
         transforms.ToTensor(), normalize,
     ])
 
-    # load dataset
-    dataset = datasets.MNIST(
-        data_dir, train=True, download=True, transform=trans
-    )
-
-    num_train = len(dataset)
-    indices = list(range(num_train))
-    split = int(np.floor(valid_size * num_train))
-
-    if shuffle:
-        np.random.seed(random_seed)
-        np.random.shuffle(indices)
-
-    train_idx, valid_idx = indices[split:], indices[:split]
-
-    train_sampler = SubsetRandomSampler(train_idx)
-    valid_sampler = SubsetRandomSampler(valid_idx)
+    dataset_train = datasets.MNIST(
+        data_dir, train=True, download=True, transform=trans)
+    dataset_test = datasets.MNIST(
+        data_dir, train=False, download=True, transform=trans)
 
     train_loader = torch.utils.data.DataLoader(
-        dataset, batch_size=batch_size, sampler=train_sampler,
+        dataset_train, batch_size=batch_size, shuffle=True,
         num_workers=num_workers, pin_memory=pin_memory,
     )
 
     valid_loader = torch.utils.data.DataLoader(
-        dataset, batch_size=batch_size, sampler=valid_sampler,
+        dataset_test, batch_size=batch_size, shuffle=False,
         num_workers=num_workers, pin_memory=pin_memory,
     )
 
@@ -90,7 +77,7 @@ def get_train_valid_loader(data_dir,
         X = np.transpose(X, [0, 2, 3, 1])
         plot_images(X, labels)
 
-    return (train_loader, valid_loader)
+    return (train_loader, valid_loader), (len(dataset_train), len(dataset_test))
 
 
 def get_test_loader(data_dir,

@@ -103,8 +103,8 @@ class retina(object):
             from_y, to_y = patch_y[i], patch_y[i] + size
 
             # cast to ints
-            from_x, to_x = from_x.data[0], to_x.data[0]
-            from_y, to_y = from_y.data[0], to_y.data[0]
+            from_x, to_x = from_x.item(), to_x.item()
+            from_y, to_y = from_y.item(), to_y.item()
 
             # pad tensor in case exceeds
             if self.exceeds(from_x, to_x, from_y, to_y, T):
@@ -260,6 +260,7 @@ class core_network(nn.Module):
 
         self.i2h = nn.Linear(input_size, hidden_size)
         self.h2h = nn.Linear(hidden_size, hidden_size)
+        self.lstm = nn.LSTMCell(input_size, hidden_size)
 
     def forward(self, g_t, h_t_prev):
         h1 = self.i2h(g_t)
@@ -334,23 +335,36 @@ class location_network(nn.Module):
     """
     def __init__(self, input_size, output_size, std):
         super(location_network, self).__init__()
-        self.std = std
-        self.fc = nn.Linear(input_size, output_size)
+        # self.config = config
+        if False:
+            self.std =  torch.nn.Parameter(torch.Tensor([std]), requires_grad=True)
+        else:
+            self.std =  torch.tensor([std], requires_grad=False)
+        hid_size = input_size // 2
+        self.fc = nn.Linear(input_size, hid_size)
+        self.fc_lt = nn.Linear(hid_size, output_size)
+        self.fc_logprob = nn.Linear(hid_size, 1)
 
     def forward(self, h_t):
         # compute mean
-        mu = F.tanh(self.fc(h_t.detach()))
+        feat = F.relu(self.fc(h_t.detach()))
+        mu = F.tanh(self.fc_lt(feat))
 
+        l_t = torch.distributions.Normal(mu, self.std).rsample()
         # reparametrization trick
-        noise = torch.zeros_like(mu)
-        noise.data.normal_(std=self.std)
-        l_t = mu + noise
-
+        # noise = torch.zeros_like(mu)
+        # noise.data.normal_(std=self.std)
+        # l_t = mu + noise
+        l_t = l_t.detach()
         log_pi = Normal(mu, self.std).log_prob(l_t)
         log_pi = torch.sum(log_pi, dim=1)
         # bound between [-1, 1]
-        l_t = F.tanh(l_t)
-
+        # l_t = F.tanh(l_t)
+        l_t = torch.clamp(l_t, -1, 1)
+        
+        actions_log_prob = self.fc_logprob(feat)
+        m = torch.distributions.categorical.Categorical(logits=actions_log_prob.detach())
+        selected_classifier = m.sample()
         return log_pi, l_t
 
 
@@ -376,5 +390,5 @@ class baseline_network(nn.Module):
         self.fc = nn.Linear(input_size, output_size)
 
     def forward(self, h_t):
-        b_t = F.relu(self.fc(h_t.detach()))
+        b_t = self.fc(h_t.detach())
         return b_t

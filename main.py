@@ -14,13 +14,14 @@ def main(config):
     # ensure reproducibility
     torch.manual_seed(config.random_seed)
     kwargs = {}
+    kwargs = {'num_workers': config.num_workers}
     if config.use_gpu:
         torch.cuda.manual_seed(config.random_seed)
         kwargs = {'num_workers': 1, 'pin_memory': True}
 
     # instantiate data loaders
     if config.is_train:
-        data_loader = get_train_valid_loader(
+        data_loader, data_size = get_train_valid_loader(
             config.data_dir, config.batch_size,
             config.random_seed, config.valid_size,
             config.shuffle, config.show_sample, **kwargs
@@ -29,8 +30,9 @@ def main(config):
         data_loader = get_test_loader(
             config.data_dir, config.batch_size, **kwargs
         )
-
+    print(config)
     # instantiate trainer
+    config.data_size = data_size
     trainer = Trainer(config, data_loader)
 
     # either train
@@ -44,5 +46,6 @@ def main(config):
 
 
 if __name__ == '__main__':
-    config, unparsed = get_config()
+    config = get_config()
+    print(config)
     main(config)

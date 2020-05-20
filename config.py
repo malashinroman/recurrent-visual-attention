@@ -18,7 +18,7 @@ def add_argument_group(name):
 glimpse_arg = add_argument_group('Glimpse Network Params')
 glimpse_arg.add_argument('--patch_size', type=int, default=8,
                          help='size of extracted patch at highest res')
-glimpse_arg.add_argument('--glimpse_scale', type=int, default=2,
+glimpse_arg.add_argument('--glimpse_scale', type=int, default=1,
                          help='scale of successive patches')
 glimpse_arg.add_argument('--num_patches', type=int, default=1,
                          help='# of downscaled patches per glimpse')
@@ -38,19 +38,29 @@ core_arg.add_argument('--hidden_size', type=int, default=256,
 
 # reinforce params
 reinforce_arg = add_argument_group('Reinforce Params')
-reinforce_arg.add_argument('--std', type=float, default=0.17,
+reinforce_arg.add_argument('--std', type=float, default=0.05,
                            help='gaussian policy standard deviation')
-reinforce_arg.add_argument('--M', type=float, default=10,
-                           help='Monte Carlo sampling for valid and test sets')
+reinforce_arg.add_argument('--learnable_std', type=str2bool, default=False,
+                           help='std is learnable parameter')
+reinforce_arg.add_argument('--zero_std_val', type=str2bool, default=False,
+                           help='std is off for val')
 
+reinforce_arg.add_argument('--std_entropy_coeff', type=float, default=0,
+                           help='gaussian policy standard deviation')
+
+reinforce_arg.add_argument('--M', type=int, default=1,
+                           help='Monte Carlo sampling for valid and test sets')
+reinforce_arg.add_argument('--supervised_loss_coeff', type=float, default=1.)
+reinforce_arg.add_argument('--reinforce_loss_coeff', type=float, default=0.01)
+reinforce_arg.add_argument('--use_original_code', type=str2bool, default=False)
 
 # data params
 data_arg = add_argument_group('Data Params')
 data_arg.add_argument('--valid_size', type=float, default=0.1,
                       help='Proportion of training set used for validation')
-data_arg.add_argument('--batch_size', type=int, default=32,
+data_arg.add_argument('--batch_size', type=int, default=128,
                       help='# of images in each batch of data')
-data_arg.add_argument('--num_workers', type=int, default=4,
+data_arg.add_argument('--num_workers', type=int, default=0,
                       help='# of subprocesses to use for data loading')
 data_arg.add_argument('--shuffle', type=str2bool, default=True,
                       help='Whether to shuffle the train and valid indices')
@@ -68,7 +78,7 @@ train_arg.add_argument('--epochs', type=int, default=200,
                        help='# of epochs to train for')
 train_arg.add_argument('--init_lr', type=float, default=3e-4,
                        help='Initial learning rate value')
-train_arg.add_argument('--lr_patience', type=int, default=10,
+train_arg.add_argument('--lr_patience', type=int, default=20,
                        help='Number of epochs to wait before reducing lr')
 train_arg.add_argument('--train_patience', type=int, default=50,
                        help='Number of epochs to wait before stopping train')
@@ -99,5 +109,5 @@ misc_arg.add_argument('--plot_freq', type=int, default=1,
 
 
 def get_config():
-    config, unparsed = parser.parse_known_args()
-    return config, unparsed
+    config = parser.parse_args()
+    return config

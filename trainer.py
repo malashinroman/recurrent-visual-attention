@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import torch.optim as optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-
+import torch.nn as nn
 import os
 import time
 import shutil
@@ -14,7 +14,7 @@ from tqdm import tqdm
 from utils import AverageMeter
 from model import RecurrentAttention
 from tensorboard_logger import configure, log_value
-
+import numpy as np
 
 class Trainer(object):
     """
@@ -54,8 +54,8 @@ class Trainer(object):
         if config.is_train:
             self.train_loader = data_loader[0]
             self.valid_loader = data_loader[1]
-            self.num_train = len(self.train_loader.sampler.indices)
-            self.num_valid = len(self.valid_loader.sampler.indices)
+            self.num_train = config.data_size[0]
+            self.num_valid = config.data_size[1]
         else:
             self.test_loader = data_loader
             self.num_test = len(self.test_loader.dataset)
@@ -110,15 +110,23 @@ class Trainer(object):
         print('[*] Number of model parameters: {:,}'.format(
             sum([p.data.nelement() for p in self.model.parameters()])))
 
-        # # initialize optimizer and scheduler
-        # self.optimizer = optim.SGD(
-        #     self.model.parameters(), lr=self.lr, momentum=self.momentum,
+        # # # initialize optimizer and scheduler
+        # # self.optimizer = optim.SGD(
+        # #     self.model.parameters(), lr=self.lr, momentum=self.momentum,
+        # # )
+        # # self.scheduler = ReduceLROnPlateau(
+        # #     self.optimizer, 'min', patience=self.lr_patience
+        # # )
+        # self.optimizer = optim.Adam(
+        #     self.model.parameters(), lr=3e-4,
         # )
-        # self.scheduler = ReduceLROnPlateau(
-        #     self.optimizer, 'min', patience=self.lr_patience
-        # )
+
         self.optimizer = optim.Adam(
-            self.model.parameters(), lr=3e-4,
+            self.model.parameters(), lr=self.config.init_lr,
+        )
+
+        self.scheduler = ReduceLROnPlateau(
+            self.optimizer, 'min', patience=self.lr_patience
         )
 
     def reset(self):
@@ -161,7 +169,7 @@ class Trainer(object):
 
             print(
                 '\nEpoch: {}/{} - LR: {:.6f}'.format(
-                    epoch+1, self.epochs, self.lr)
+                    epoch+1, self.epochs, self.optimizer.param_groups[0]['lr'])
             )
 
             # train for 1 epoch
@@ -171,7 +179,7 @@ class Trainer(object):
             valid_loss, valid_acc = self.validate(epoch)
 
             # # reduce lr if validation loss plateaus
-            # self.scheduler.step(valid_loss)
+            self.scheduler.step(-valid_acc)
 
             is_best = valid_acc > self.best_valid_acc
             msg1 = "train loss: {:.3f} - train acc: {:.3f} "
@@ -206,6 +214,7 @@ class Trainer(object):
 
         This is used by train() and should not be called manually.
         """
+        self.model.train()
         batch_time = AverageMeter()
         losses = AverageMeter()
         accs = AverageMeter()
@@ -213,6 +222,8 @@ class Trainer(object):
         tic = time.time()
         with tqdm(total=self.num_train) as pbar:
             for i, (x, y) in enumerate(self.train_loader):
+                self.optimizer.zero_grad()
+
                 if self.use_gpu:
                     x, y = x.cuda(), y.cuda()
                 x, y = Variable(x), Variable(y)
@@ -270,18 +281,24 @@ class Trainer(object):
                 loss_reinforce = torch.mean(loss_reinforce, dim=0)
 
                 # sum up into a hybrid loss
-                loss = loss_action + loss_baseline + loss_reinforce
 
+                supervised_loss = self.config.supervised_loss_coeff * loss_action
+                reinforcment_loss = self.config.reinforce_loss_coeff *  loss_reinforce
+                # std_loss = - 0.5 * (torch.log(2 * 3.14 * 2.7 * self.model.locator.std) - torch.log(self.model.locator.mu))
+                std_loss = -self.config.std_entropy_coeff * torch.log(self.model.locator.std * np.sqrt(np.pi * np.e * 2)) * self.config.reinforce_loss_coeff
+
+                loss = supervised_loss + reinforcment_loss + loss_baseline + std_loss
+
+                # loss = loss_action
                 # compute accuracy
                 correct = (predicted == y).float()
                 acc = 100 * (correct.sum() / len(y))
 
                 # store
-                losses.update(loss.data[0], x.size()[0])
-                accs.update(acc.data[0], x.size()[0])
+                losses.update(loss.item(), x.size()[0])
+                accs.update(acc.item(), x.size()[0])
 
                 # compute gradients and update SGD
-                self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
 
@@ -291,9 +308,8 @@ class Trainer(object):
 
                 pbar.set_description(
                     (
-                        "{:.1f}s - loss: {:.3f} - acc: {:.3f}".format(
-                            (toc-tic), loss.data[0], acc.data[0]
-                        )
+                        f"{toc-tic:.1f}s - loss: {loss.item():.3f} / su {supervised_loss.item():.3f} "
+                        f"rl: {reinforcment_loss.item():.3f} - acc: {acc.item():.3f} - std:{self.model.locator.std.item():.3f} "
                     )
                 )
                 pbar.update(self.batch_size)
@@ -331,6 +347,9 @@ class Trainer(object):
         """
         Evaluate the model on the validation set.
         """
+        tmp_std = self.model.locator.std
+        self.model.locator.std = 0
+        self.model.eval()
         losses = AverageMeter()
         accs = AverageMeter()
 
@@ -406,8 +425,8 @@ class Trainer(object):
             acc = 100 * (correct.sum() / len(y))
 
             # store
-            losses.update(loss.data[0], x.size()[0])
-            accs.update(acc.data[0], x.size()[0])
+            losses.update(loss.item(), x.size()[0])
+            accs.update(acc.item(), x.size()[0])
 
             # log to tensorboard
             if self.use_tensorboard:
@@ -415,6 +434,7 @@ class Trainer(object):
                 log_value('valid_loss', losses.avg, iteration)
                 log_value('valid_acc', accs.avg, iteration)
 
+            self.model.locator.std = tmp_std
         return losses.avg, accs.avg
 
     def test(self):

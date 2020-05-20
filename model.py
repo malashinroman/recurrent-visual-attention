@@ -53,8 +53,8 @@ class RecurrentAttention(nn.Module):
         self.std = std
 
         self.sensor = glimpse_network(h_g, h_l, g, k, s, c)
-        self.rnn = core_network(hidden_size, hidden_size)
         self.locator = location_network(hidden_size, 2, std)
+        self.rnn = core_network(hidden_size, hidden_size)
         self.classifier = action_network(hidden_size, num_classes)
         self.baseliner = baseline_network(hidden_size, 1)
 
@@ -100,7 +100,7 @@ class RecurrentAttention(nn.Module):
         # we assume both dimensions are independent
         # 1. pdf of the joint is the product of the pdfs
         # 2. log of the product is the sum of the logs
-        log_pi, l_t = self.locator(h_t)
+        log_pi, l_t = self.locator(h_t.detach())
         b_t = self.baseliner(h_t).squeeze()
 
         if last:
